@@ -30,6 +30,7 @@ datasize
 dataalign
 netifdebug
 asynctest
+tags
 
 # Allows for Eclipse CDT lookups without checking in linux source
 linux_source_cdt
