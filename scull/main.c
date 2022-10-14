@@ -55,7 +55,6 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 struct scull_dev *scull_devices;	/* allocated in scull_init_module */
 
-
 /*
  * Empty out the scull device; must be called with the device
  * semaphore held.
@@ -113,8 +112,6 @@ int scull_read_procmem(struct seq_file *s, void *v)
         }
         return 0;
 }
-
-
 
 /*
  * Here are our sequence iteration methods.  Our "position" is
@@ -245,7 +242,7 @@ int scull_open(struct inode *inode, struct file *filp)
 	dev = container_of(inode->i_cdev, struct scull_dev, cdev);
 	filp->private_data = dev; /* for other methods */
 
-	/* now trim to 0 the length of the device if open was write-only */
+	/* now trim(修剪；修整) to 0 the length of the device if open was write-only */
 	if ( (filp->f_flags & O_ACCMODE) == O_WRONLY) {
 		if (mutex_lock_interruptible(&dev->lock))
 			return -ERESTARTSYS;

@@ -15,7 +15,6 @@ Module.symvers
 modules.order
 *.mod
 *.a
-
 # misc-progs
 nbtest 
 load50 
@@ -31,8 +30,9 @@ dataalign
 netifdebug
 asynctest
 tags
-
 # Allows for Eclipse CDT lookups without checking in linux source
 linux_source_cdt
 !.project
 !.cproject
+my-modules/netlink/src/netlink.ko
+my-modules/netlink/app/user
