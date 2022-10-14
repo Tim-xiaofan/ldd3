@@ -39,7 +39,7 @@ mm_open(struct inode *node, struct file *fp)
 }
 
 int 
-mm_release(struct inode *node, struct file *fp)
+_mm_release(struct inode *node, struct file *fp)
 {
 	atomic_dec_if_positive(&mm_ref);
     if(atomic_read(&mm_ref) == 0)
@@ -135,7 +135,7 @@ static struct file_operations mm_fops =
 {
 	.owner = THIS_MODULE,
 	.open = mm_open,
-	.release = mm_release,
+	.release = _mm_release,
 	.read = mm_read,
 	.write = mm_write,
 	.unlocked_ioctl = mm_ioctl,
