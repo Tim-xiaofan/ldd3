@@ -36,3 +36,5 @@ linux_source_cdt
 !.cproject
 my-modules/netlink/src/netlink.ko
 my-modules/netlink/app/user
+my-modules/major-minor/src/major_minor.ko
+my-modules/jitimer/jitimer.ko

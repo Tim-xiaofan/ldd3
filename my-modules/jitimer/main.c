@@ -1,162 +1,154 @@
-/* simple kernel module: hello
- * Licensed under GPLv2 or later
- * */
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/cdev.h>
 #include <linux/netdevice.h>
 #include <linux/limits.h>
-#include "major_minor.h"
+#include <linux/timer.h>
+#include <linux/wait.h>
+#include <stdbool.h>
+#include <linux/moduleparam.h>
+#include "jitimer.h"
 
-#define DEVNAME "major_minor"
+#define DEVNAME "jitimer"
+#define BUF_SIZE 1024
+
+/** Structure */
+typedef struct
+{
+	struct cdev cdev;
+	spinlock_t lock;
+	wait_queue_head_t inq;
+	char buf[BUF_SIZE];
+	bool busy;
+	struct timer_list timer;
+	unsigned long prevjiffies;
+	int loops;
+}jitimer_dev_t;
+
 
 /** VARIBALES*/
-static mm_dev_t *mm_devs = NULL;
-
-static int mm_minor			  = 0;
-static int mm_major			  = 0;
-static const int mm_count	  = 2;
-static int mm_fops_registered	  = 0;
-static struct class *mm_cls   = NULL;
-static atomic_t mm_ref = {0};
+static jitimer_dev_t *jitimer_devs = NULL;
+static int jitimer_minor			  = 0;
+static int jitimer_major			  = 0;
+static const int JITIMER_COUNT	  = 1;
+static bool jitimer_fops_registered	  = false;
+static struct class *jitimer_cls   = NULL;
+static const int JITIMER_LOOPS = 20;
+static int jitimer_delay = 4;
+module_param(jitimer_delay, int,  S_IRUGO);
 
 /** FUNCTIONS*/
-static int mm_create_devfiles(void);
-static void mm_destroy_devfiles(void);
+static int jitimer_create_devfiles(void);
+static void jitimer_destroy_devfiles(void);
 
-int 
-mm_open(struct inode *node, struct file *fp)
+static int jitimer_open(struct inode *node, struct file *fp)
 {
-	mm_dev_t *dev; /** device infomation*/
-	if(atomic_inc_return(&mm_ref) == 1)
-	{
-		PRINTK("First one to open\n");
-	}
-	dev = container_of(node->i_cdev, mm_dev_t, cdev);
+	int ret = 0;
+	jitimer_dev_t *dev = container_of(node->i_cdev, jitimer_dev_t, cdev);
 	fp->private_data = dev;
-    PRINTK("ep open success, dev=%p\n", dev);
+	spin_lock(&dev->lock);
+	if(!dev->busy)
+	{
+		dev->busy = true;
+	}
+	else
+	  ret = -EBUSY;
+	spin_unlock(&dev->lock);
+    PRINTK("ep open %s, dev=%p\n", (ret == 0)?"success":"failed" , dev);
+    return ret;
+}
+
+static int jitimer_release(struct inode *node, struct file *fp)
+{
+	jitimer_dev_t *dev = fp->private_data; 
+	spin_lock(&dev->lock);
+	dev->busy = false;
+	spin_unlock(&dev->lock);
+    PRINTK( "jitimer_release\n");
     return 0;
 }
 
-int 
-_mm_release(struct inode *node, struct file *fp)
+static ssize_t jitimer_read(struct file *fp, char __user *buf, 
+			size_t size, loff_t * offset)
 {
-	atomic_dec_if_positive(&mm_ref);
-    if(atomic_read(&mm_ref) == 0)
-	{
-		PRINTK("Last one to close\n");
-	}
-    PRINTK( "mm_release\n");
-    return 0;
-}
+	jitimer_dev_t *dev = fp->private_data;
+	unsigned long j;
+	size_t min;
 
-ssize_t 
-mm_read(struct file *fp, char __user *buf, size_t size, loff_t * offset)
-{
-    int uncopied, ret, mlen, len;
-	mm_dev_t *dev = fp->private_data;
+	spin_lock(&dev->lock);
+	dev->loops = JITIMER_LOOPS;
+	j = jiffies;
+	dev->prevjiffies = j;
+	dev->timer.expires = j + jitimer_delay;
+	add_timer(&dev->timer);
+	spin_unlock(&dev->lock);
 
-	if(unlikely(dev == NULL))
+	/** wait for the buffer to fill*/
+	wait_event_interruptible(dev->inq, !dev->loops);
+
+	/** read buffer*/
+	spin_lock(&dev->lock);
+
+	min = (size < strlen(dev->buf)) ?size:strlen(dev->buf);
+	if(copy_to_user(buf, dev->buf, min))
 	{
-		PRINTK("private_data is NULL\n");
+		PRINTK("copy_to_user failed\n");
+		spin_unlock(&dev->lock);
 		return -EFAULT;
 	}
-	
-	if(unlikely(mutex_lock_interruptible(&dev->lock)))
-	{
-		PRINTK("mutex_lock_interruptible failed\n");
-		return -ERESTARTSYS;
-	}
-    
-    /*将内核空间的数据copy到用户空间*/
-	mlen = strlen(dev->read_buf);
-    len = (mlen <= size) ? mlen : size;
-    PRINTK("Message:%s, mlen = %d, len=%d\n", dev->read_buf, mlen, len);
-    uncopied = copy_to_user(buf, dev->read_buf, len);
-    if(unlikely(uncopied != 0))
-    {
-        PRINTK("read : %d byte(s) not copy_to_user\n", uncopied);
-        ret = -EFAULT;
-		goto out;
-    }
-	ret = len;
 
-out:
-	mutex_unlock(&dev->lock);
-    return len;
+	spin_unlock(&dev->lock);
+
+	return min;
 }
 
-ssize_t 
-mm_write(struct file *fp, const char __user *buf, size_t size, loff_t * offset)
-{
-    int uncopied, ret; 
-    size_t len; 
-	char pathname[NAME_MAX];
-
-	mm_dev_t *dev = fp->private_data;
-
-	if(unlikely(dev == NULL))
-	{
-		PRINTK("private_data is NULL\n");
-		return -EFAULT;
-	}
-	
-	if(unlikely(mutex_lock_interruptible(&dev->lock)))
-	{
-		PRINTK("mutex_lock_interruptible failed\n");
-		return -ERESTARTSYS;
-	}
-
-    /*将用户空间的数据copy到内核空间*/
-    len = (size <= BUF_SIZE) ? size : BUF_SIZE;
-    uncopied = copy_from_user(dev->write_buf, buf, len);
-    if(unlikely(uncopied != 0))//拷贝出错
-    {
-        PRINTK( "write : %d byte(s) not copy_from_user\n", uncopied);
-        ret =  -EFAULT;
-		goto out;
-    }
-    PRINTK( "write to file %s: len=%ld, %s\n", 
-				dentry_path_raw(fp->f_path.dentry, pathname, sizeof(pathname)), 
-				len, dev->write_buf);
-	ret = len;
-out:
-	mutex_unlock(&dev->lock);
-    return len;
-}
-
-long mm_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
-{
-	PRINTK("ioctl is not support\n");
-	return -EINVAL;
-}
-
-static struct file_operations mm_fops = 
+static struct file_operations jitimer_fops = 
 {
 	.owner = THIS_MODULE,
-	.open = mm_open,
-	.release = _mm_release,
-	.read = mm_read,
-	.write = mm_write,
-	.unlocked_ioctl = mm_ioctl,
+	.open = jitimer_open,
+	.release = jitimer_release,
+	.read = jitimer_read,
 };
+
+/** timer callback*/
+static void 
+jitimer_timer(struct timer_list * t)
+{
+	jitimer_dev_t *dev =  from_timer(dev, t, timer);
+	unsigned long j; 
+
+	spin_lock(&dev->lock);
+	j = jiffies; 
+	sprintf(dev->buf, "%9li(jiffies) %3li(delta) %i(in_interrupt)"
+				" %6i(pid) %i(cpu) %s(comm)\n", 
+				j, j - dev->prevjiffies, in_interrupt() ? 1 : 0, 
+				current->pid, smp_processor_id(), current->comm); 
+	if (--dev->loops) { 
+		dev->timer.expires += jitimer_delay; 
+		dev->prevjiffies = j; 
+		add_timer(&dev->timer); 
+	} else { 
+		wake_up_interruptible(&dev->inq); 
+	}
+	spin_unlock(&dev->lock);
+}
 
 /*
  * Set up the char_dev structure for this device.
  */
 static int 
-mm_setup_cdev(mm_dev_t *dev, int index)
+jitimer_setup_cdev(jitimer_dev_t *dev, int index)
 {
-    int err, devno = MKDEV(mm_major, mm_minor + index);
+    int err, devno = MKDEV(jitimer_major, jitimer_minor + index);
 
-    cdev_init(&dev->cdev, &mm_fops);
+    cdev_init(&dev->cdev, &jitimer_fops);
     dev->cdev.owner = THIS_MODULE;
     err = cdev_add (&dev->cdev, devno, 1);
-	mutex_init(&dev->lock);
-	memset(dev->read_buf, 0, sizeof(dev->read_buf));
-	snprintf(dev->read_buf, sizeof(dev->read_buf), 
-				"Message from %s%d", DEVNAME, index);
-	memset(dev->write_buf, 0, sizeof(dev->write_buf));
+	spin_lock_init(&dev->lock);
+	memset(dev->buf, 0, sizeof(dev->buf));
+	dev->busy = false;
+	dev->timer.function = jitimer_timer;
+	init_waitqueue_head(&dev->inq);
     /* Fail gracefully if need be */
     if (err)
         PRINTK("Error %d: adding %s%d", err, DEVNAME, index);
@@ -164,143 +156,150 @@ mm_setup_cdev(mm_dev_t *dev, int index)
 }
 
 static void
-mm_stop_cdev(mm_dev_t *dev)
+jitimer_stop_cdev(jitimer_dev_t *dev)
 {
-	mutex_destroy(&dev->lock);
 	cdev_del(&dev->cdev);
 }
 
 static void
-mm_stop_cdevs(mm_dev_t *dev, int count)
+jitimer_stop_cdevs(jitimer_dev_t *dev, int count)
 {
 	int i;
 	for(i = 0; i< count; ++i)
-	  mm_stop_cdev(&dev[i]);
+	  jitimer_stop_cdev(&dev[i]);
 }
 
 /**
   Sut up devices
  */
 static int 
-mm_setup_cdevs(mm_dev_t * devs, int count)
+jitimer_setup_cdevs(jitimer_dev_t * devs, int count)
 {
 	int i, j;
 	for(i = 0; i < count; ++i)
 	{
-		if(mm_setup_cdev(&devs[i], i))
+		if(jitimer_setup_cdev(&devs[i], i))
 		{
 		  for(j = 0; j < i; ++j)
-			mm_stop_cdev(&devs[j]);
-		  PRINTK("mm_setup_cdev failed\n");
+			jitimer_stop_cdev(&devs[j]);
+		  PRINTK("jitimer_setup_cdev failed\n");
 		  return -1;
 		}
 	}
-	PRINTK("mm_setup_cdev succeed\n");
+	PRINTK("jitimer_setup_cdev succeed\n");
 	return 0;
 }
 
 static int __init 
-mm_init(void)
+jitimer_init(void)
 {
 	int ret;
 	dev_t devnum = 0;
 
 	PRINTK( "ku init\n");
 
-	/** Asking for a dynamic mm_major*/
-	ret = alloc_chrdev_region(&devnum, mm_minor, mm_count, DEVNAME);
+	if(jitimer_delay < 4)
+	{
+		PRINTK("jitimer_delay = %d < 4\n", jitimer_delay);
+		return -EINVAL;
+	}
+	PRINTK("jitimer_delay = %d\n", jitimer_delay);
+
+	/** Asking for a dynamic jitimer_major*/
+	ret = alloc_chrdev_region(&devnum, jitimer_minor, JITIMER_COUNT, DEVNAME);
 	if(ret < 0)
 	{
-		PRINTK( "mm_init failed : alloc_chrdev_region\n");
+		PRINTK( "jitimer_init failed : alloc_chrdev_region\n");
 		goto ask_major_failed;
 	}
-	mm_major = MAJOR(devnum);
+	jitimer_major = MAJOR(devnum);
 	PRINTK("devnum=%d\n", devnum);
 
 	/*  
      * allocate the devices -- we can't have them static, as the number
      * can be specified at load time
      */
-	mm_devs = (mm_dev_t *)kmalloc(mm_count * sizeof(mm_dev_t), GFP_KERNEL);
-	if(!mm_devs)
+	jitimer_devs = (jitimer_dev_t *)kmalloc(JITIMER_COUNT * sizeof(jitimer_dev_t), GFP_KERNEL);
+	if(!jitimer_devs)
 	{
 		PRINTK("kmalloc failed\n");
 		ret = -ENOMEM;
 		goto allocate_devices_failed;
 	}
-	memset(mm_devs, 0, mm_count * sizeof(mm_dev_t));
+	memset(jitimer_devs, 0, JITIMER_COUNT * sizeof(jitimer_dev_t));
 
 	/* Initialize all device. */
-	if(mm_setup_cdevs(mm_devs, mm_count) == -1)
+	if(jitimer_setup_cdevs(jitimer_devs, JITIMER_COUNT) == -1)
 	  goto setup_devs_failed; 
 
-	mm_fops_registered = 1;
+	jitimer_fops_registered = true;
 	
 	/** Create all device file*/
-	if(mm_create_devfiles() == -1)
+	if(jitimer_create_devfiles() == -1)
 	  goto create_devfiles_failed;
 
 
-	PRINTK("mm_init success : mm_major=%d, mm_minor=%d\n", mm_major, mm_minor);
+	PRINTK("jitimer_init success : jitimer_major=%d, jitimer_minor=%d\n", jitimer_major, jitimer_minor);
 	return 0;
 
 create_devfiles_failed:
-	mm_stop_cdevs(mm_devs, mm_count);
+	jitimer_stop_cdevs(jitimer_devs, JITIMER_COUNT);
 setup_devs_failed:
-	kfree(mm_devs);
+	kfree(jitimer_devs);
 allocate_devices_failed:
-	unregister_chrdev_region(devnum, mm_count);
+	unregister_chrdev_region(devnum, JITIMER_COUNT);
 ask_major_failed:
 	return ret;
 }
 
 static void __exit 
-mm_exit(void)
+jitimer_exit(void)
 {
-    mm_destroy_devfiles();
-	if(mm_fops_registered)
+    jitimer_destroy_devfiles();
+	if(jitimer_fops_registered)
 	{
-		mm_stop_cdevs(mm_devs, mm_count);
-		kfree(mm_devs);
-		unregister_chrdev_region(MKDEV(mm_major, mm_minor), mm_count);
-		mm_fops_registered = 0;
+		jitimer_stop_cdevs(jitimer_devs, JITIMER_COUNT);
+		kfree(jitimer_devs);
+		unregister_chrdev_region(MKDEV(jitimer_major, jitimer_minor), JITIMER_COUNT);
+		jitimer_fops_registered = false;
 	}
 	PRINTK( "finish ku exit.\n");
 }
 
 static int 
-mm_create_devfiles(void)
+jitimer_create_devfiles(void)
 {
     int i, j;
     struct device *dev;
 
     /* 在/sys中导出设备类信息 */
-    mm_cls = class_create(THIS_MODULE, DEVNAME);
-    if(mm_cls == NULL)
+    jitimer_cls = class_create(THIS_MODULE, DEVNAME);
+    if(jitimer_cls == NULL)
     {
-        PRINTK( "mm_create_devfiles failed : class_create\n");
+        PRINTK( "jitimer_create_devfiles failed : class_create\n");
         return -1;
     }
 
-    /* 在mm_cls指向的类中创建一组(个)设备文件 */
-	PRINTK("mm_minor=%d, mm_minor + mm_count=%d\n", mm_minor, mm_minor + mm_count);
-    for(i = mm_minor;  i < (mm_minor + mm_count); i++)
+    /* 在jitimer_cls指向的类中创建一组(个)设备文件 */
+	PRINTK("jitimer_minor=%d, jitimer_minor + JITIMER_COUNT=%d\n", 
+				jitimer_minor, jitimer_minor + JITIMER_COUNT);
+    for(i = jitimer_minor;  i < (jitimer_minor + JITIMER_COUNT); i++)
 	{
-        dev = device_create(mm_cls, 
+        dev = device_create(jitimer_cls, 
                     NULL, 
-                    MKDEV(mm_major,i),
+                    MKDEV(jitimer_major,i),
                     NULL,
                     "%s%d", 
                     DEVNAME,
                     i);
         if(unlikely(dev == NULL))
         {
-            PRINTK( "mm_create_devfiles failed : device_create\n");
-            for(j = mm_minor; j < i; ++j)
+            PRINTK( "jitimer_create_devfiles failed : device_create\n");
+            for(j = jitimer_minor; j < i; ++j)
             {
-                device_destroy(mm_cls, MKDEV(mm_major,j));
+                device_destroy(jitimer_cls, MKDEV(jitimer_major,j));
             }
-            class_destroy(mm_cls);
+            class_destroy(jitimer_cls);
             return -1;
         }
         PRINTK( "Dev %s%d has been created\n", DEVNAME, i);
@@ -309,26 +308,26 @@ mm_create_devfiles(void)
 }
 
 static void 
-mm_destroy_devfiles(void)
+jitimer_destroy_devfiles(void)
 {
     int i;
-    if(mm_cls == NULL) 
+    if(jitimer_cls == NULL) 
     {
-        PRINTK( "mm_destroy_devfiles : class is null\n");
+        PRINTK( "jitimer_destroy_devfiles : class is null\n");
         return;
     }
-    /* 在mm_cls指向的类中删除一组(个)设备文件 */
-    for(i = mm_minor; i<(mm_minor+mm_count); i++){
-        device_destroy(mm_cls, MKDEV(mm_major,i));
+    /* 在jitimer_cls指向的类中删除一组(个)设备文件 */
+    for(i = jitimer_minor; i<(jitimer_minor+JITIMER_COUNT); i++){
+        device_destroy(jitimer_cls, MKDEV(jitimer_major,i));
     }
 
     /* 在/sys中删除设备类信息 */
-    class_destroy(mm_cls);             //一定要先卸载device再卸载class
-    PRINTK( "mm_destroy_devfiles success");
+    class_destroy(jitimer_cls);             //一定要先卸载device再卸载class
+    PRINTK( "jitimer_destroy_devfiles success");
 }
 
-module_init(mm_init);
-module_exit(mm_exit);
+module_init(jitimer_init);
+module_exit(jitimer_exit);
 
 MODULE_AUTHOR("ZYJ");
 MODULE_LICENSE("GPL v2");

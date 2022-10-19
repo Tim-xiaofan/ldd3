@@ -18,9 +18,9 @@ EXTRA_CFLAGS += -I$(LDDINC)
 ifneq ($(KERNELRELEASE),)
 # call from kernel build system
 
-major_minor-objs := main.o 
+jitimer-objs := main.o 
 
-obj-m	:= major_minor.o
+obj-m	:= jitimer.o
 
 else
 
