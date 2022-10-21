@@ -31,10 +31,10 @@ typedef struct
 static jitasklet_dev_t *jitasklet_devs = NULL;
 static int jitasklet_minor			  = 0;
 static int jitasklet_major			  = 0;
-static const int JITIMER_COUNT	  = 1;
+static const int JITASKLET_COUNT	  = 1;
 static bool jitasklet_fops_registered	  = false;
 static struct class *jitasklet_cls   = NULL;
-static const int JITIMER_LOOPS = 20;
+static const int JITASKLET_LOOPS = 20;
 
 /** FUNCTIONS*/
 static int jitasklet_create_devfiles(void);
@@ -81,7 +81,7 @@ static ssize_t jitasklet_read(struct file *fp, char __user *buf,
 				  dev, jitasklet_devs, (dev==jitasklet_devs)?"yes":"no");
 
 	spin_lock(&dev->lock);
-	dev->loops = JITIMER_LOOPS;
+	dev->loops = JITASKLET_LOOPS;
 	j = jiffies;
 	dev->prevjiffies = j;
 	spin_unlock(&dev->lock);
@@ -212,7 +212,7 @@ jitasklet_init(void)
 	PRINTK( "ku init\n");
 
 	/** Asking for a dynamic jitasklet_major*/
-	ret = alloc_chrdev_region(&devnum, jitasklet_minor, JITIMER_COUNT, DEVNAME);
+	ret = alloc_chrdev_region(&devnum, jitasklet_minor, JITASKLET_COUNT, DEVNAME);
 	if(ret < 0)
 	{
 		PRINTK( "jitasklet_init failed : alloc_chrdev_region\n");
@@ -225,17 +225,17 @@ jitasklet_init(void)
      * allocate the devices -- we can't have them static, as the number
      * can be specified at load time
      */
-	jitasklet_devs = (jitasklet_dev_t *)kmalloc(JITIMER_COUNT * sizeof(jitasklet_dev_t), GFP_KERNEL);
+	jitasklet_devs = (jitasklet_dev_t *)kmalloc(JITASKLET_COUNT * sizeof(jitasklet_dev_t), GFP_KERNEL);
 	if(!jitasklet_devs)
 	{
 		PRINTK("kmalloc failed\n");
 		ret = -ENOMEM;
 		goto allocate_devices_failed;
 	}
-	memset(jitasklet_devs, 0, JITIMER_COUNT * sizeof(jitasklet_dev_t));
+	memset(jitasklet_devs, 0, JITASKLET_COUNT * sizeof(jitasklet_dev_t));
 
 	/* Initialize all device. */
-	if(jitasklet_setup_cdevs(jitasklet_devs, JITIMER_COUNT) == -1)
+	if(jitasklet_setup_cdevs(jitasklet_devs, JITASKLET_COUNT) == -1)
 	  goto setup_devs_failed; 
 
 	jitasklet_fops_registered = true;
@@ -249,11 +249,11 @@ jitasklet_init(void)
 	return 0;
 
 create_devfiles_failed:
-	jitasklet_stop_cdevs(jitasklet_devs, JITIMER_COUNT);
+	jitasklet_stop_cdevs(jitasklet_devs, JITASKLET_COUNT);
 setup_devs_failed:
 	kfree(jitasklet_devs);
 allocate_devices_failed:
-	unregister_chrdev_region(devnum, JITIMER_COUNT);
+	unregister_chrdev_region(devnum, JITASKLET_COUNT);
 ask_major_failed:
 	return ret;
 }
@@ -264,9 +264,9 @@ jitasklet_exit(void)
     jitasklet_destroy_devfiles();
 	if(jitasklet_fops_registered)
 	{
-		jitasklet_stop_cdevs(jitasklet_devs, JITIMER_COUNT);
+		jitasklet_stop_cdevs(jitasklet_devs, JITASKLET_COUNT);
 		kfree(jitasklet_devs);
-		unregister_chrdev_region(MKDEV(jitasklet_major, jitasklet_minor), JITIMER_COUNT);
+		unregister_chrdev_region(MKDEV(jitasklet_major, jitasklet_minor), JITASKLET_COUNT);
 		jitasklet_fops_registered = false;
 	}
 	PRINTK( "finish ku exit.\n");
@@ -287,9 +287,9 @@ jitasklet_create_devfiles(void)
     }
 
     /* 在jitasklet_cls指向的类中创建一组(个)设备文件 */
-	PRINTK("jitasklet_minor=%d, jitasklet_minor + JITIMER_COUNT=%d\n", 
-				jitasklet_minor, jitasklet_minor + JITIMER_COUNT);
-    for(i = jitasklet_minor;  i < (jitasklet_minor + JITIMER_COUNT); i++)
+	PRINTK("jitasklet_minor=%d, jitasklet_minor + JITASKLET_COUNT=%d\n", 
+				jitasklet_minor, jitasklet_minor + JITASKLET_COUNT);
+    for(i = jitasklet_minor;  i < (jitasklet_minor + JITASKLET_COUNT); i++)
 	{
         dev = device_create(jitasklet_cls, 
                     NULL, 
@@ -323,7 +323,7 @@ jitasklet_destroy_devfiles(void)
         return;
     }
     /* 在jitasklet_cls指向的类中删除一组(个)设备文件 */
-    for(i = jitasklet_minor; i<(jitasklet_minor+JITIMER_COUNT); i++){
+    for(i = jitasklet_minor; i<(jitasklet_minor+JITASKLET_COUNT); i++){
         device_destroy(jitasklet_cls, MKDEV(jitasklet_major,i));
     }
 

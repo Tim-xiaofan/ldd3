@@ -39,3 +39,4 @@ my-modules/netlink/app/user
 my-modules/major-minor/src/major_minor.ko
 my-modules/jitimer/jitimer.ko
 my-modules/jitasklet/jitasklet.ko
+my-modules/workqueue/_workqueue.ko
