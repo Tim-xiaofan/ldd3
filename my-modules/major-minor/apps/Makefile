@@ -21,7 +21,7 @@ endif
 endif
 
 # Add flag 
-CFLAGS += -g -Wall -I./
+CFLAGS += -g -O2 -Wall -Werror -I./
 
 $(APP): $(SRCS-y) Makefile 
 	$(CC) $(CFLAGS) $(SRCS-y) -o $@

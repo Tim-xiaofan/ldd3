@@ -1,6 +1,8 @@
 /* simple kernel module: hello
  * Licensed under GPLv2 or later
  * */
+#include <linux/kernel.h>
+#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/cdev.h>
@@ -151,15 +153,16 @@ mm_setup_cdev(mm_dev_t *dev, int index)
 
     cdev_init(&dev->cdev, &mm_fops);
     dev->cdev.owner = THIS_MODULE;
-    err = cdev_add (&dev->cdev, devno, 1);
+     err = cdev_add (&dev->cdev, devno, 1);
 	mutex_init(&dev->lock);
 	memset(dev->read_buf, 0, sizeof(dev->read_buf));
 	snprintf(dev->read_buf, sizeof(dev->read_buf), 
 				"Message from %s%d", DEVNAME, index);
 	memset(dev->write_buf, 0, sizeof(dev->write_buf));
     /* Fail gracefully if need be */
-    if (err)
+    if (err) {
         PRINTK("Error %d: adding %s%d", err, DEVNAME, index);
+    }
 	return err;
 }
 
@@ -275,7 +278,11 @@ mm_create_devfiles(void)
     struct device *dev;
 
     /* 在/sys中导出设备类信息 */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
     mm_cls = class_create(THIS_MODULE, DEVNAME);
+#else
+    mm_cls = class_create(DEVNAME);
+#endif
     if(mm_cls == NULL)
     {
         PRINTK( "mm_create_devfiles failed : class_create\n");
