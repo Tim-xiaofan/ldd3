@@ -5,7 +5,11 @@
 #include <linux/limits.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
+#include <linux/version.h>
+#include <linux/kernel.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 #include <stdbool.h>
+#endif
 #include <linux/moduleparam.h>
 #include <linux/delay.h>
 #include "jitasklet.h"
@@ -163,8 +167,9 @@ jitasklet_setup_cdev(jitasklet_dev_t *dev, int index)
 	tasklet_setup(&dev->tasklet, jitasklet_cb);
 	init_waitqueue_head(&dev->inq);
     /* Fail gracefully if need be */
-    if (err)
+    if (err) {
         PRINTK("Error %d: adding %s%d", err, DEVNAME, index);
+    }
 	return err;
 }
 
@@ -279,7 +284,11 @@ jitasklet_create_devfiles(void)
     struct device *dev;
 
     /* 在/sys中导出设备类信息 */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
     jitasklet_cls = class_create(THIS_MODULE, DEVNAME);
+#else
+    jitasklet_cls = class_create(DEVNAME);
+#endif
     if(jitasklet_cls == NULL)
     {
         PRINTK( "jitasklet_create_devfiles failed : class_create\n");

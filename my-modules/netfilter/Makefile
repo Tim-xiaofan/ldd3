@@ -5,9 +5,9 @@ DEBUG = y
 
 # Add your debugging flag (or not) to CFLAGS
 ifeq ($(DEBUG),y)
-  DEBFLAGS = -O -Wall -g -DDEBUG # "-O" is needed to expand inlines
+  DEBFLAGS = -O -Wall -Werror -g -DDEBUG # "-O" is needed to expand inlines
 else
-  DEBFLAGS = -O2 -Wall
+  DEBFLAGS = -O2 -Wall -Werror
 endif
 
 LDDINC=$(PWD)/../include

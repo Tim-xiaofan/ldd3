@@ -5,7 +5,11 @@
 #include <linux/limits.h>
 #include <linux/timer.h>
 #include <linux/wait.h>
+#include <linux/version.h>
+#include <linux/kernel.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 #include <stdbool.h>
+#endif
 #include <linux/moduleparam.h>
 #include "jitimer.h"
 
@@ -150,8 +154,9 @@ jitimer_setup_cdev(jitimer_dev_t *dev, int index)
 	dev->timer.function = jitimer_timer;
 	init_waitqueue_head(&dev->inq);
     /* Fail gracefully if need be */
-    if (err)
+    if (err) {
         PRINTK("Error %d: adding %s%d", err, DEVNAME, index);
+    }
 	return err;
 }
 
@@ -273,7 +278,11 @@ jitimer_create_devfiles(void)
     struct device *dev;
 
     /* 在/sys中导出设备类信息 */
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(6, 5, 0)
     jitimer_cls = class_create(THIS_MODULE, DEVNAME);
+#else
+    jitimer_cls = class_create(DEVNAME);
+#endif
     if(jitimer_cls == NULL)
     {
         PRINTK( "jitimer_create_devfiles failed : class_create\n");

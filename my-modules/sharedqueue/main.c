@@ -5,7 +5,11 @@
 #include <linux/limits.h>
 #include <linux/interrupt.h>
 #include <linux/wait.h>
+#include <linux/kernel.h>
+#include <linux/version.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
 #include <stdbool.h>
+#endif
 #include <linux/moduleparam.h>
 #include <linux/delay.h>
 #include <linux/workqueue.h>
@@ -158,8 +162,9 @@ sharedqueue_setup_cdev(sharedqueue_dev_t *dev, int index)
 	INIT_DELAYED_WORK(&dev->dwork, sharedqueue_cb);
 	init_waitqueue_head(&dev->inq);
     /* Fail gracefully if need be */
-    if (err)
+    if (err) {
         PRINTK("Error %d: adding %s%d", err, DEVNAME, index);
+    }
 	return err;
 }
 
@@ -280,7 +285,11 @@ sharedqueue_create_devfiles(void)
     struct device *dev;
 
     /* 在/sys中导出设备类信息 */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
     sharedqueue_cls = class_create(THIS_MODULE, DEVNAME);
+#else
+    sharedqueue_cls = class_create(DEVNAME);
+#endif
     if(sharedqueue_cls == NULL)
     {
         PRINTK( "sharedqueue_create_devfiles failed : class_create\n");
