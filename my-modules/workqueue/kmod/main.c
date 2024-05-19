@@ -116,7 +116,7 @@ static struct file_operations workqueue_fops =
 	.read = workqueue_read,
 };
 
-/** tasklet callback*/
+/** workqueue callback*/
 static void 
 workqueue_cb(struct work_struct * work)
 {
