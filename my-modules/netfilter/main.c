@@ -15,6 +15,8 @@ MODULE_DESCRIPTION("Netfliter test");
 
 static bool hooked = false;
 static char priv[] = {'p', 'r', 'i', 'v', '\0'};
+static int print_point = 50;
+module_param(print_point, int, S_IRUGO);
 
 static unsigned int
 nf_test_in_hook(void *priv, struct sk_buff *skb, const struct nf_hook_state *state);
@@ -66,46 +68,44 @@ nf_test_in_hook(void *priv, struct sk_buff *skb, const struct nf_hook_state *sta
 {
 	struct ethhdr *eth_header;
 	struct iphdr *ip_header;
+    static int ct = 0;
 
-	eth_header = (struct ethhdr *)(skb_mac_header(skb));
-	ip_header = (struct iphdr *)(skb_network_header(skb));
-	dump_hook_state(state);
-	PRINTK("priv=%p:%s\n", priv, (char*)priv);	
-	dump_ethhdr(eth_header);
-	dump_iphdr(ip_header);
-	return NF_ACCEPT;
+    ++ct;
+    if(ct > print_point) {
+        ct = 0;
+        eth_header = (struct ethhdr *)(skb_mac_header(skb));
+        ip_header = (struct iphdr *)(skb_network_header(skb));
+        dump_hook_state(state);
+        PRINTK("priv=%p:%s\n", priv, (char*)priv);	
+        dump_ethhdr(eth_header);
+        dump_iphdr(ip_header);
+    }
+	return NF_ACCEPT; // 内核继续处理
 }
 
 static int hook_init(void)
 {
 	int ret;
-	struct net *net, *back;
+	struct net *net;
 	for_each_net(net)
 	{
 		ret = nf_register_net_hooks(net, nf_test_ops, ARRAY_SIZE(nf_test_ops));
 		if (ret < 0)
 		{
-			PRINTK("register nf hook fail\n");
-			goto failed;
+			PRINTK("ERROR: register nf hook fail\n");
+			return ret;
 		}
+        PRINTK("nf_register_net_hooks: net=%p", net);
 	}
 	PRINTK("register nf test hook\n");
 	hooked = true;
+
 	return 0;
-failed:
-	back = net;
-	for_each_net(net)
-	{
-		if(net == back)
-		  break;
-		else
-		  nf_unregister_net_hooks(net, nf_test_ops, ARRAY_SIZE(nf_test_ops));
-	}
-	return ret;
 }
 
 static int __init init_nf_test(void)
 {
+    PRINTK("print_point: %d", print_point);
 	return hook_init();
 }
 
