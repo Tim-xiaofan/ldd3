@@ -8,7 +8,7 @@ APP = user
 SRCS-y := *.c
 
 # Add flag 
-CFLAGS += -g -Wall -I./
+CFLAGS += -g -Wall -Werror -I./
 
 $(APP): $(SRCS-y) Makefile 
 	$(CC) $(CFLAGS) $(SRCS-y) -o $@

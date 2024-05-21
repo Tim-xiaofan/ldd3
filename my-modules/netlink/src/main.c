@@ -9,7 +9,7 @@
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
 
-#define NETLINK_TEST  17
+#define NETLINK_TEST  NETLINK_USERSOCK
 MODULE_LICENSE("GPL");
 
 struct sock *nl_sk = NULL;
@@ -40,11 +40,11 @@ netlink_send(int pid, uint8_t *message, int len)
    memcpy(NLMSG_DATA(nlh), message, len);
    netlink_unicast(nl_sk, 
 			   skb_1, 
-			   pid, // 目的进程ID
+			   pid, // 目的进程ID作为portid
 			   MSG_DONTWAIT);
 }
 
-static void input (struct sk_buff *skb)
+static void input(struct sk_buff *skb)
 {
 	struct nlmsghdr *nlh = NULL;
 	char *payload = NULL;
@@ -57,7 +57,8 @@ static void input (struct sk_buff *skb)
 	/* process netlink message with header pointed by
 	 * nlh	and payload pointed by payload
 	 */
-	printk("NL got a user message from pid=%d,len=%d:%s\n", pid, skb->len, payload);
+	printk("NL got a user message from pid=%d,nl_len=%d,payload=%d:%s\n", 
+                pid, skb->len, nlh->nlmsg_len - NLMSG_HDRLEN, payload);
 	//NETLINK_CB(skb).groups = 0; /** not in mcast group*/
 	//NETLINK_CB(skb).pid = 0;      /* from kernel */
 	//NETLINK_CB(skb).portid = pid;
@@ -66,15 +67,18 @@ static void input (struct sk_buff *skb)
 	//{
 	//	printk("netlink_unicast failed\n");
 	//}
-	netlink_send(pid, NLMSG_DATA(nlh), nlh->nlmsg_len - NLMSG_SPACE(0));
+    // Double echo
+    for(int i = 0; i < 2; ++i) {
+        netlink_send(pid, NLMSG_DATA(nlh), nlh->nlmsg_len - NLMSG_HDRLEN);
+    }
 }
 
 static int __init nl_init(void)
 {
 	struct netlink_kernel_cfg cfg = {
-		.groups	= 1,
-		.input = input,
-		.flags	= NL_CFG_F_NONROOT_RECV
+		.groups	= 1, // 最大的多播组
+		.input = input, // 处理来自用户空间的消息
+		.flags	= NL_CFG_F_NONROOT_RECV|NL_CFG_F_NONROOT_SEND // 支持非root用户从多播组接收发消息
 	};
 	nl_sk = netlink_kernel_create(&init_net, NETLINK_TEST, &cfg);
 	if(!nl_sk)
@@ -82,6 +86,7 @@ static int __init nl_init(void)
 		printk("netlink_kernel_create failed");
 		return -1;
 	}
+    printk(KERN_INFO "nl_init success");
 	return 0;
 }
 
@@ -89,6 +94,7 @@ static int __init nl_init(void)
 void __exit nl_exit(void)
 {
 	netlink_kernel_release(nl_sk);
+    printk(KERN_INFO "nl_exit success");
 }
 
 module_init(nl_init);
