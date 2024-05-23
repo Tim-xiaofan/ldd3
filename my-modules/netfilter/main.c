@@ -86,21 +86,29 @@ nf_test_in_hook(void *priv, struct sk_buff *skb, const struct nf_hook_state *sta
 static int hook_init(void)
 {
 	int ret;
-	struct net *net;
+	struct net *net, *back;
 	for_each_net(net)
 	{
 		ret = nf_register_net_hooks(net, nf_test_ops, ARRAY_SIZE(nf_test_ops));
 		if (ret < 0)
 		{
-			PRINTK("ERROR: register nf hook fail\n");
-			return ret;
+			PRINTK("register nf hook fail\n");
+			goto failed;
 		}
-        PRINTK("nf_register_net_hooks: net=%p", net);
 	}
 	PRINTK("register nf test hook\n");
 	hooked = true;
-
 	return 0;
+failed:
+	back = net;
+	for_each_net(net)
+	{
+		if(net == back)
+		  break;
+		else
+		  nf_unregister_net_hooks(net, nf_test_ops, ARRAY_SIZE(nf_test_ops));
+	}
+	return ret;
 }
 
 static int __init init_nf_test(void)
